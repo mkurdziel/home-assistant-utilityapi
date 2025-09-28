@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 
 import asyncio
 import aiohttp
+import asyncio
+import logging
 
 from .const import DEFAULT_BASE_URL
 
@@ -25,36 +27,74 @@ class UtilityAPIClient:
         self._base_url = base_url.rstrip("/")
         # A small semaphore to avoid flooding the API if many meters
         self._sem = asyncio.Semaphore(5)
+        # auth_mode: 'auto' tries Bearer first then X-API-Key if unauthorized
+        self._auth_mode: str = "auto"
+        self._logger = logging.getLogger(__name__)
 
-    def _headers(self) -> Dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self._api_key}",
+    def _headers(self, use_mode: Optional[str] = None) -> Dict[str, str]:
+        mode = use_mode or ("bearer" if self._auth_mode in ("auto", "bearer") else "x-api-key")
+        headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
             "User-Agent": "HomeAssistant-UtilityAPI/0.1.0",
         }
+        if mode == "bearer":
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        else:
+            headers["X-Api-Key"] = self._api_key
+        return headers
 
     async def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         url = f"{self._base_url}/{path.lstrip('/') }"
         async with self._sem:
-            async with self._session.get(url, headers=self._headers(), params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status in (401, 403):
-                    raise InvalidAuthError("Invalid UtilityAPI API key")
-                if resp.status >= 400:
-                    text = await resp.text()
-                    raise UtilityAPIError(f"GET {url} failed: {resp.status} {text}")
-                return await resp.json()
+            try:
+                # Try with current/primary mode
+                async with self._session.get(
+                    url,
+                    headers=self._headers("bearer" if self._auth_mode in ("auto", "bearer") else "x-api-key"),
+                    params=params,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    if resp.status in (401, 403):
+                        # If auto, retry using alternate header style once
+                        if self._auth_mode == "auto":
+                            alt = "x-api-key" if "Authorization" in self._headers("bearer") else "bearer"
+                            self._logger.debug("UtilityAPI unauthorized with primary auth; retrying with %s", alt)
+                            async with self._session.get(
+                                url,
+                                headers=self._headers(alt),
+                                params=params,
+                                timeout=aiohttp.ClientTimeout(total=30),
+                            ) as resp2:
+                                if resp2.status in (401, 403):
+                                    raise InvalidAuthError("Invalid UtilityAPI API key")
+                                if resp2.status >= 400:
+                                    text2 = await resp2.text()
+                                    raise UtilityAPIError(f"GET {url} failed: {resp2.status} {text2}")
+                                # Lock in the working auth mode
+                                self._auth_mode = alt
+                                return await resp2.json()
+                        raise InvalidAuthError("Invalid UtilityAPI API key")
+                    if resp.status >= 400:
+                        text = await resp.text()
+                        raise UtilityAPIError(f"GET {url} failed: {resp.status} {text}")
+                    # If we got here, request worked; set mode if auto
+                    if self._auth_mode == "auto":
+                        # Determine which header was used successfully
+                        self._auth_mode = "bearer" if "Authorization" in self._headers("bearer") else "x-api-key"
+                    return await resp.json()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                raise UtilityAPIError(f"Network error calling {url}: {e}") from e
 
     async def validate(self) -> None:
-        # Minimal request to validate the API key
-        # Query meters with a small limit; if unauthorized, this will raise
-        await self._get("meters", {"limit": 1})
+        # Minimal request to validate the API key; prefer known filter param
+        await self._get("meters", {"is_archived": "false"})
 
     async def list_meters(self, archived: Optional[bool] = None) -> List[UtilityAPIMeter]:
-        params: Dict[str, Any] = {"limit": 500}
+        params: Dict[str, Any] = {}
         if archived is not None:
-            # UtilityAPI uses 'archived' boolean filter; fallback if API differs
-            params["archived"] = str(archived).lower()
+            # UtilityAPI API uses 'is_archived' for filtering
+            params["is_archived"] = str(archived).lower()
         data = await self._get("meters", params)
         # UtilityAPI commonly returns an object with 'meters' array; support both list or object
         meters_raw: List[Dict[str, Any]]
@@ -69,7 +109,7 @@ class UtilityAPIClient:
             meters.append(
                 UtilityAPIMeter(
                     id=str(m.get("id") or m.get("meter_id") or m.get("uid") or ""),
-                    archived=bool(m.get("archived", False)),
+                    archived=bool(m.get("is_archived", m.get("archived", False))),
                     label=(m.get("label") or m.get("name") or m.get("service_address")),
                     updated=(m.get("updated") or m.get("modified") or m.get("updated_at")),
                     raw=m,

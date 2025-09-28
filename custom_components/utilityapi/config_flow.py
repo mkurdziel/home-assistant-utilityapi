@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict
+import logging
 
 import hashlib
 import voluptuous as vol
@@ -16,6 +17,7 @@ from .api import UtilityAPIClient, InvalidAuthError, UtilityAPIError
 
 class UtilityAPIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
+    _LOGGER = logging.getLogger(__name__)
 
     @staticmethod
     @callback
@@ -35,7 +37,9 @@ class UtilityAPIConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     await client.validate()
                 except InvalidAuthError:
                     errors["base"] = "invalid_auth"
-                except UtilityAPIError:
+                except UtilityAPIError as e:
+                    # Log details to help diagnose connection issues
+                    self._LOGGER.warning("UtilityAPI connection failed during validation: %s", e)
                     errors["base"] = "cannot_connect"
                 else:
                     unique = hashlib.sha256(api_key.encode()).hexdigest()[:12]
@@ -54,4 +58,3 @@ class UtilityAPIOptionsFlowHandler(config_entries.OptionsFlow):
     async def async_step_init(self, user_input: Dict[str, Any] | None = None) -> FlowResult:
         # No options for now, just provide a way to trigger reload
         return self.async_create_entry(title="Options", data={})
-
