@@ -31,13 +31,14 @@ class UtilityAPIClient:
             "Authorization": f"Bearer {self._api_key}",
             "Accept": "application/json",
             "Content-Type": "application/json",
+            "User-Agent": "HomeAssistant-UtilityAPI/0.1.0",
         }
 
     async def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Any:
         url = f"{self._base_url}/{path.lstrip('/') }"
         async with self._sem:
             async with self._session.get(url, headers=self._headers(), params=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status == 401:
+                if resp.status in (401, 403):
                     raise InvalidAuthError("Invalid UtilityAPI API key")
                 if resp.status >= 400:
                     text = await resp.text()
@@ -102,4 +103,3 @@ class UtilityAPIError(Exception):
 
 class InvalidAuthError(UtilityAPIError):
     pass
-
