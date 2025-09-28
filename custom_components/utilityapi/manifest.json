@@ -1,0 +1,13 @@
+{
+  "domain": "utilityapi",
+  "name": "UtilityAPI",
+  "version": "0.1.0",
+  "config_flow": true,
+  "documentation": "https://github.com/mkurdziel/home-assistant-utilityapi",
+  "issue_tracker": "https://github.com/mkurdziel/home-assistant-utilityapi/issues",
+  "codeowners": ["@mkurdziel"],
+  "iot_class": "cloud_polling",
+  "integration_type": "hub",
+  "loggers": ["custom_components.utilityapi"],
+  "requirements": []
+}

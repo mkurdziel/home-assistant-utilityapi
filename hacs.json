@@ -1,0 +1,8 @@
+{
+  "name": "UtilityAPI",
+  "render_readme": true,
+  "domains": ["utilityapi"],
+  "country": ["ALL"],
+  "homeassistant": "2023.8.0"
+}
+
