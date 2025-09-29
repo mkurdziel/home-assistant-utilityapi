@@ -13,6 +13,19 @@
       "invalid_auth": "Invalid API key",
       "cannot_connect": "Cannot connect to UtilityAPI"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "UtilityAPI Options",
+        "description": "Configure data backfill lookback window (days).",
+        "data": {
+          "lookback_days": "Lookback days (1-365)"
+        }
+      }
+    },
+    "error": {
+      "invalid_lookback": "Lookback days must be between 1 and 365"
+    }
   }
 }
-

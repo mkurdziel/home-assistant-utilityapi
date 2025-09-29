@@ -11,7 +11,7 @@ from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN, CONF_API_KEY
+from .const import DOMAIN, CONF_API_KEY, CONF_LOOKBACK_DAYS, DEFAULT_LOOKBACK_DAYS
 from .api import UtilityAPIClient, InvalidAuthError, UtilityAPIError
 
 
@@ -56,5 +56,18 @@ class UtilityAPIOptionsFlowHandler(config_entries.OptionsFlow):
         self.config_entry = config_entry
 
     async def async_step_init(self, user_input: Dict[str, Any] | None = None) -> FlowResult:
-        # No options for now, just provide a way to trigger reload
-        return self.async_create_entry(title="Options", data={})
+        errors: Dict[str, str] = {}
+        if user_input is not None:
+            # Basic validation
+            try:
+                days = int(user_input.get(CONF_LOOKBACK_DAYS, DEFAULT_LOOKBACK_DAYS))
+                if days < 1 or days > 365:
+                    raise ValueError
+            except Exception:
+                errors["base"] = "invalid_lookback"
+            else:
+                return self.async_create_entry(title="Options", data={CONF_LOOKBACK_DAYS: days})
+
+        current_days = self.config_entry.options.get(CONF_LOOKBACK_DAYS, DEFAULT_LOOKBACK_DAYS)
+        schema = vol.Schema({vol.Required(CONF_LOOKBACK_DAYS, default=current_days): int})
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)

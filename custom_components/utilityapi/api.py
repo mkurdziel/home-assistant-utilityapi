@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import asyncio
 import aiohttp
@@ -135,6 +135,35 @@ class UtilityAPIClient:
             if m.id == meter_id:
                 return m.raw
         return {"id": meter_id}
+
+    async def get_intervals(
+        self, meter_id: str, start_date: str, end_date: str
+    ) -> Dict[str, Any]:
+        """Fetch intervals for a meter between start and end dates.
+
+        Uses the top-level intervals endpoint with `meters`, `start`, `end`.
+        Dates should be YYYY-MM-DD (local) as per UtilityAPI example.
+        """
+        params = {
+            "meters": str(meter_id),
+            "start": start_date,
+            "end": end_date,
+        }
+        return await self._get("intervals", params)
+
+    async def get_bills(
+        self, meter_id: str, start_date: str, end_date: str
+    ) -> Dict[str, Any]:
+        """Fetch bills overlapping the date range for a meter.
+
+        Returns parsed JSON (dict) which may include a 'bills' list.
+        """
+        params = {
+            "meters": str(meter_id),
+            "start": start_date,
+            "end": end_date,
+        }
+        return await self._get("bills", params)
 
 
 class UtilityAPIError(Exception):
