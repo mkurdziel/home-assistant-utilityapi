@@ -54,7 +54,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _handle_import(call):
         logger = logging.getLogger(__name__)
         try:
-            data = IMPORT_SCHEMA(call.data)
+            # Data already validated by schema in async_register; make a mutable copy
+            data = dict(call.data)
             meter_id: str = data["meter_id"]
             start_s: str = data["start"]
             end_s: str = data["end"]
