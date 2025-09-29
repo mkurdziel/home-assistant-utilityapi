@@ -4,6 +4,8 @@ from typing import Any, Dict, List
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+import logging
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 from datetime import timedelta
@@ -50,53 +52,57 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     async def _handle_import(call):
-        data = IMPORT_SCHEMA(call.data)
-        meter_id: str = data["meter_id"]
-        start_s: str = data["start"]
-        end_s: str = data["end"]
-        # Parse to dates
-        start_d = dt_util.parse_date(start_s)
-        end_d = dt_util.parse_date(end_s)
-        if not start_d or not end_d:
-            return
-        day = start_d
-        while day < end_d:
-            day_next = day + timedelta(days=1)
-            # Fetch intervals for the day
-            try:
+        logger = logging.getLogger(__name__)
+        try:
+            data = IMPORT_SCHEMA(call.data)
+            meter_id: str = data["meter_id"]
+            start_s: str = data["start"]
+            end_s: str = data["end"]
+            # Parse to dates
+            start_d = dt_util.parse_date(start_s)
+            end_d = dt_util.parse_date(end_s)
+            if not start_d or not end_d:
+                raise HomeAssistantError("Invalid start/end date format; expected YYYY-MM-DD")
+            day = start_d
+            while day < end_d:
+                day_next = day + timedelta(days=1)
+                # Fetch intervals for the day
                 intervals = await client.get_intervals(meter_id, day.isoformat(), day_next.isoformat())
-            except Exception:
-                break
-            arr = []
-            if isinstance(intervals, dict) and isinstance(intervals.get("intervals"), list):
-                arr = intervals["intervals"]
-            hours: List[Dict[str, Any]] = []
-            unit = None
-            for inter in arr:
-                readings = inter.get("readings") or []
-                for r in readings:
-                    usage = 0.0
-                    dps = r.get("datapoints") or []
-                    for dp in dps:
-                        v = dp.get("value")
-                        try:
-                            usage += float(v)
-                        except (TypeError, ValueError):
-                            pass
-                        unit = unit or dp.get("unit")
-                    # Cost not always present; leave None and let bills handle user-visible cost
-                    hours.append(
-                        {
-                            "start": r.get("start"),
-                            "end": r.get("end"),
-                            "usage": usage,
-                            "cost": None,
-                            "unit": unit,
-                        }
-                    )
-            # Write statistics for this day
-            await async_write_hourly_usage_cost(hass, meter_id, unit=unit, currency="USD", hours=hours)
-            day = day_next
+                arr = []
+                if isinstance(intervals, dict) and isinstance(intervals.get("intervals"), list):
+                    arr = intervals["intervals"]
+                hours: List[Dict[str, Any]] = []
+                unit = None
+                for inter in arr:
+                    readings = inter.get("readings") or []
+                    for r in readings:
+                        usage = 0.0
+                        dps = r.get("datapoints") or []
+                        for dp in dps:
+                            v = dp.get("value")
+                            try:
+                                usage += float(v)
+                            except (TypeError, ValueError):
+                                pass
+                            unit = unit or dp.get("unit")
+                        # Cost not always present; leave None and let bills handle user-visible cost
+                        hours.append(
+                            {
+                                "start": r.get("start"),
+                                "end": r.get("end"),
+                                "usage": usage,
+                                "cost": None,
+                                "unit": unit,
+                            }
+                        )
+                # Write statistics for this day
+                await async_write_hourly_usage_cost(hass, meter_id, unit=unit, currency="USD", hours=hours)
+                day = day_next
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            logger.exception("Import history service failed: %s", err)
+            raise HomeAssistantError(f"Import failed: {err}")
 
     hass.services.async_register(DOMAIN, SERVICE_IMPORT_HISTORY, _handle_import, schema=IMPORT_SCHEMA)
     return True

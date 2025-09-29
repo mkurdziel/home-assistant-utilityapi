@@ -5,6 +5,8 @@ from datetime import datetime
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
+import logging
+from inspect import iscoroutinefunction
 
 try:
     # HA 2023.12+
@@ -56,7 +58,17 @@ async def async_write_hourly_usage_cost(
     cost_stat_id = f"utilityapi:{meter_id}_cost"
 
     # Fetch last sums to continue cumulatives
-    last = await async_get_last_statistics(hass, 1, [usage_stat_id, cost_stat_id], include_sum=True)
+    last = {}
+    try:
+        if iscoroutinefunction(async_get_last_statistics):  # type: ignore[arg-type]
+            last = await async_get_last_statistics(hass, 1, [usage_stat_id, cost_stat_id], include_sum=True)  # type: ignore[misc]
+        else:  # pragma: no cover
+            # Some cores expose a sync signature; run in executor
+            last = await hass.async_add_executor_job(
+                async_get_last_statistics, hass, 1, [usage_stat_id, cost_stat_id], True  # type: ignore[misc]
+            )
+    except Exception as err:  # pragma: no cover
+        logging.getLogger(__name__).debug("Could not read last statistics, starting from zero: %s", err)
     last_usage_sum = 0.0
     last_cost_sum = 0.0
     if usage_stat_id in last and last[usage_stat_id]:
@@ -84,6 +96,7 @@ async def async_write_hourly_usage_cost(
         "has_mean": False,
         "has_sum": True,
         "name": f"UtilityAPI {meter_id} Usage",
+        "source": "integration",
     }
     cost_meta = {
         "statistic_id": cost_stat_id,
@@ -91,6 +104,7 @@ async def async_write_hourly_usage_cost(
         "has_mean": False,
         "has_sum": True,
         "name": f"UtilityAPI {meter_id} Cost",
+        "source": "integration",
     }
 
     usage_rows: List[Dict[str, Any]] = []
@@ -116,8 +130,10 @@ async def async_write_hourly_usage_cost(
         if h.get("cost") is not None:
             cost_rows.append({"start": start, "sum": running_cost})
 
-    if usage_rows:
-        await async_add_external_statistics(hass, usage_meta, usage_rows)
-    if cost_rows:
-        await async_add_external_statistics(hass, cost_meta, cost_rows)
-
+    try:
+        if usage_rows:
+            await async_add_external_statistics(hass, usage_meta, usage_rows)
+        if cost_rows:
+            await async_add_external_statistics(hass, cost_meta, cost_rows)
+    except Exception as err:  # pragma: no cover
+        logging.getLogger(__name__).warning("Failed writing external statistics: %s", err)
